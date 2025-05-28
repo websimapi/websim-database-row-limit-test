@@ -12,6 +12,7 @@ const App = () => {
     const [successfulLocalInserts, setSuccessfulLocalInserts] = React.useState(0);
 
     const timeoutRef = React.useRef(null);
+    const isRunningRef = React.useRef(isRunning); // Initialize with the current (initial) isRunning state
 
     const subscribeFn = React.useCallback(cb => testRowCollection.subscribe(cb), [testRowCollection]);
     const getListFn = React.useCallback(() => testRowCollection.getList(), [testRowCollection]);
@@ -32,82 +33,78 @@ const App = () => {
             setSuccessfulLocalInserts(prev => prev + 1);
             setCurrentValue(prev => prev + 1);
             setLastError(null);
-            // Optional: If things are going well, try to speed up slightly
-            // setDelayMs(prev => Math.max(1, Math.floor(prev * 0.95))); // Speed up by 5%, min 1ms
             setStatusMessage(`Success: Value ${valueToInsert}. Next in ${delayMs}ms.`);
         } catch (error) {
             console.error(`Insertion error for value ${valueToInsert}:`, error);
             const errorMessage = error.message || String(error);
-            setLastError(`Failed (val: ${valueToInsert}): ${errorMessage.substring(0,100)}`); // Limit error message length
-            const newDelay = Math.min(Math.floor(delayMs * 1.5) + 100, 10000); // Slow down: 1.5x + 100ms, cap at 10s
+            setLastError(`Failed (val: ${valueToInsert}): ${errorMessage.substring(0,100)}`);
+            const newDelay = Math.min(Math.floor(delayMs * 1.5) + 100, 10000);
             setDelayMs(newDelay);
             setStatusMessage(`Error: Value ${valueToInsert}. New delay: ${newDelay}ms. Retrying...`);
         }
     }, [currentValue, delayMs, testRowCollection, setAttemptedCount, setSuccessfulLocalInserts, setCurrentValue, setLastError, setDelayMs, setStatusMessage]);
 
     React.useEffect(() => {
+        // Always update the ref's current value to the latest isRunning state.
+        isRunningRef.current = isRunning;
+
         if (isRunning) {
             const runLoop = async () => {
-                if (!isRunningRef.current) return; // Uses a ref to check current status
+                if (!isRunningRef.current) return; // Check ref before async operation
                 await insertRowLogic();
-                if (isRunningRef.current) { // Check again after await
+                if (isRunningRef.current) { // Check ref again after async operation
                     timeoutRef.current = setTimeout(runLoop, delayMs);
                 }
             };
             
-            // Use a ref for isRunning to ensure the loop checks the latest state
-            // This is because the `runLoop` function's closure captures `isRunning` at the time of its definition (or last `useEffect` run)
-            // While `delayMs` change correctly triggers re-schedule, `isRunning` changing to false needs immediate effect.
-            const isRunningRef = React.useRef(isRunning);
-            isRunningRef.current = isRunning; // Update ref on each render
+            // Removed the local `const isRunningRef = React.useRef(isRunning);` and
+            // `isRunningRef.current = isRunning;` from here as it's now handled
+            // at the component scope and updated at the start of this effect.
 
-            // Clear previous timeout before starting a new one to ensure correct delay.
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            timeoutRef.current = setTimeout(runLoop, delayMs); // Start the loop
+            timeoutRef.current = setTimeout(runLoop, delayMs);
 
         } else {
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
                 timeoutRef.current = null;
             }
-            if (attemptedCount > 0) { // Only update status if test was running
+            if (attemptedCount > 0) {
                 setStatusMessage("Stopped. Click 'Start Test' to resume or 'Reset' for a new session.");
             } else {
                 setStatusMessage("Idle. Click 'Start Test' to begin.");
             }
         }
 
-        return () => {
+        return () => { // Cleanup function
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
             }
-            // Ensure ref is updated if component unmounts or isRunning changes.
+            // This line now correctly refers to the component-scoped isRunningRef.
+            // Setting it to false on cleanup is a safeguard to signal any
+            // ongoing async operations (post-await) to stop.
             isRunningRef.current = false; 
         };
-    }, [isRunning, delayMs, insertRowLogic, attemptedCount]); // Add attemptedCount to re-evaluate initial status message.
+    }, [isRunning, delayMs, insertRowLogic, attemptedCount]);
 
     const handleStartTest = () => {
-        // If not resetting value, it continues. Resetting provides a cleaner test start.
-        // setCurrentValue(0); // Optional: reset value for each test run
         setLastError(null);
-        setDelayMs(1); // Start fast
+        setDelayMs(1); 
         setIsRunning(true);
         setStatusMessage("Test started. Initializing first insert...");
     };
 
     const handleStopTest = () => {
         setIsRunning(false);
-        // Status message updated by useEffect
     };
     
     const handleResetClientState = () => {
-        setIsRunning(false); // Stop any ongoing test
-        
+        setIsRunning(false); 
         setCurrentValue(0);
         setAttemptedCount(0);
         setSuccessfulLocalInserts(0);
         setLastError(null);
-        setDelayMs(10); // Reset delay to a moderate default
+        setDelayMs(10); 
         setStatusMessage("Client state reset. Database rows shown are current. Ready for a new test.");
     };
 
@@ -152,4 +149,3 @@ const App = () => {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
-
