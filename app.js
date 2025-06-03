@@ -1,6 +1,23 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { WebsimSocket, useQuery } from '@websim/use-query';
+
 const App = () => {
-    const room = React.useMemo(() => new WebsimSocket(), []);
     const collectionName = 'stress_test_row_v3'; // Use a versioned collection name
+
+    const room = React.useMemo(() => {
+        return new WebsimSocket({
+            schema: {
+                [collectionName]: {
+                    id: "uuid", // Standard, auto-managed by WebsimSocket
+                    value: "integer",
+                    client_timestamp: "numeric" // Storing Date.now() result
+                    // username and created_at are automatically added
+                }
+            }
+        });
+    }, [collectionName]); // collectionName is a const, so this memo runs once
+
     const testRowCollection = React.useMemo(() => room.collection(collectionName), [room, collectionName]);
 
     const [isRunning, setIsRunning] = React.useState(false);
@@ -12,11 +29,16 @@ const App = () => {
     const [successfulLocalInserts, setSuccessfulLocalInserts] = React.useState(0);
 
     const timeoutRef = React.useRef(null);
-    const isRunningRef = React.useRef(isRunning); // Initialize with the current (initial) isRunning state
+    const isRunningRef = React.useRef(isRunning); 
 
-    const subscribeFn = React.useCallback(cb => testRowCollection.subscribe(cb), [testRowCollection]);
-    const getListFn = React.useCallback(() => testRowCollection.getList(), [testRowCollection]);
-    const dbRows = React.useSyncExternalStore(subscribeFn, getListFn, () => []);
+    // Fetch database rows using useQuery
+    const { data: dbRowsData, loading: dbRowsLoading } = useQuery(testRowCollection);
+    const dbRows = dbRowsData || []; // Ensure dbRows is always an array
+
+    // Sort rows by creation date for display (most recent first)
+    const sortedDbRows = React.useMemo(() => {
+        return [...dbRows].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }, [dbRows]);
     
     const confirmedCountInDB = dbRows.length;
 
@@ -45,22 +67,17 @@ const App = () => {
     }, [currentValue, delayMs, testRowCollection, setAttemptedCount, setSuccessfulLocalInserts, setCurrentValue, setLastError, setDelayMs, setStatusMessage]);
 
     React.useEffect(() => {
-        // Always update the ref's current value to the latest isRunning state.
         isRunningRef.current = isRunning;
 
         if (isRunning) {
             const runLoop = async () => {
-                if (!isRunningRef.current) return; // Check ref before async operation
+                if (!isRunningRef.current) return; 
                 await insertRowLogic();
-                if (isRunningRef.current) { // Check ref again after async operation
+                if (isRunningRef.current) { 
                     timeoutRef.current = setTimeout(runLoop, delayMs);
                 }
             };
             
-            // Removed the local `const isRunningRef = React.useRef(isRunning);` and
-            // `isRunningRef.current = isRunning;` from here as it's now handled
-            // at the component scope and updated at the start of this effect.
-
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             timeoutRef.current = setTimeout(runLoop, delayMs);
 
@@ -76,13 +93,10 @@ const App = () => {
             }
         }
 
-        return () => { // Cleanup function
+        return () => { 
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
             }
-            // This line now correctly refers to the component-scoped isRunningRef.
-            // Setting it to false on cleanup is a safeguard to signal any
-            // ongoing async operations (post-await) to stop.
             isRunningRef.current = false; 
         };
     }, [isRunning, delayMs, insertRowLogic, attemptedCount]);
@@ -130,22 +144,27 @@ const App = () => {
             {lastError && <p className="error-message">Last Error: {lastError}</p>}
             
             <h2>Database Verification</h2>
-            <p><strong>Total Confirmed Rows in DB: {confirmedCountInDB}</strong></p>
+            <p><strong>Total Confirmed Rows in DB: {dbRowsLoading ? 'Loading...' : confirmedCountInDB}</strong></p>
             <p><em>(Showing up to 5 most recent rows from database. List updates in real-time.)</em></p>
             <ul>
-                {dbRows.length === 0 && <li>No rows found in the database for collection '{collectionName}'.</li>}
-                {dbRows.slice(0, 5).map(row => (
-                    <li key={row.id}>
-                        <strong>Value: {row.value}</strong> (ID: {row.id.substring(0,8)}...) <br />
-                        Created: {new Date(row.created_at).toLocaleString()} by {row.username} <br />
-                        Client Ts: {row.client_timestamp ? new Date(row.client_timestamp).toLocaleTimeString([], {hour12:false, minute:'2-digit', second:'2-digit', fractionalSecondDigits: 3}) : 'N/A'}
-                    </li>
-                ))}
+                {dbRowsLoading ? (
+                    <li>Loading database entries...</li>
+                ) : sortedDbRows.length === 0 ? (
+                    <li>No rows found in the database for collection '{collectionName}'.</li>
+                ) : (
+                    sortedDbRows.slice(0, 5).map(row => (
+                        <li key={row.id}>
+                            <strong>Value: {row.value}</strong> (ID: {row.id.substring(0,8)}...) <br />
+                            Created: {new Date(row.created_at).toLocaleString()} by {row.username} <br />
+                            Client Ts: {row.client_timestamp ? new Date(row.client_timestamp).toLocaleTimeString([], {hour12:false, minute:'2-digit', second:'2-digit', fractionalSecondDigits: 3}) : 'N/A'}
+                        </li>
+                    ))
+                )}
             </ul>
-            {dbRows.length > 5 && <p>...and {dbRows.length - 5} more rows not shown.</p>}
+            { !dbRowsLoading && sortedDbRows.length > 5 && <p>...and {sortedDbRows.length - 5} more rows not shown.</p>}
         </div>
     );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = createRoot(document.getElementById('root'));
 root.render(<App />);
