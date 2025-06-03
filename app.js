@@ -31,15 +31,17 @@ const App = () => {
     const timeoutRef = React.useRef(null);
     const isRunningRef = React.useRef(isRunning); 
 
-    // Fetch database rows using useQuery
-    const { data: dbRowsData, loading: dbRowsLoading } = useQuery(testRowCollection);
-    const dbRows = dbRowsData || []; // Ensure dbRows is always an array
+    // Fetch database rows using useQuery with a direct SQL query
+    const { data: dbRowsData, loading: dbRowsLoading } = useQuery(
+        room.query(
+            `SELECT r.id, r.value, r.client_timestamp, r.created_at, u.username 
+             FROM public.${collectionName} r 
+             JOIN public.user u ON r.user_id = u.id 
+             ORDER BY r.created_at DESC`
+        )
+    );
+    const dbRows = dbRowsData || []; // Ensure dbRows is always an array, already sorted by SQL
 
-    // Sort rows by creation date for display (most recent first)
-    const sortedDbRows = React.useMemo(() => {
-        return [...dbRows].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    }, [dbRows]);
-    
     const confirmedCountInDB = dbRows.length;
 
     const insertRowLogic = React.useCallback(async () => {
@@ -149,10 +151,10 @@ const App = () => {
             <ul>
                 {dbRowsLoading ? (
                     <li>Loading database entries...</li>
-                ) : sortedDbRows.length === 0 ? (
+                ) : dbRows.length === 0 ? (
                     <li>No rows found in the database for collection '{collectionName}'.</li>
                 ) : (
-                    sortedDbRows.slice(0, 5).map(row => (
+                    dbRows.slice(0, 5).map(row => (
                         <li key={row.id}>
                             <strong>Value: {row.value}</strong> (ID: {row.id.substring(0,8)}...) <br />
                             Created: {new Date(row.created_at).toLocaleString()} by {row.username} <br />
@@ -161,7 +163,7 @@ const App = () => {
                     ))
                 )}
             </ul>
-            { !dbRowsLoading && sortedDbRows.length > 5 && <p>...and {sortedDbRows.length - 5} more rows not shown.</p>}
+            { !dbRowsLoading && dbRows.length > 5 && <p>...and {dbRows.length - 5} more rows not shown.</p>}
         </div>
     );
 };
