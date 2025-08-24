@@ -150,39 +150,41 @@ const App = () => {
 
         try {
             for (const collectionNameToClear of collectionsToClear) {
-                setStatusMessage(`Fetching rows from '${collectionNameToClear}'...`);
+                setStatusMessage(`Starting deletion for '${collectionNameToClear}'...`);
                 const collection = room.collection(collectionNameToClear);
-                
-                // We wrap this in a try/catch because getList might fail if the table doesn't exist.
-                let allRows = [];
-                try {
-                     allRows = await collection.getList();
-                } catch(e) {
-                    console.warn(`Could not get list for ${collectionNameToClear}, probably doesn't exist. Skipping.`);
-                    setStatusMessage(`Skipping '${collectionNameToClear}', likely doesn't exist.`);
-                    continue; // Move to the next collection
-                }
-
-                if (allRows.length === 0) {
-                    setStatusMessage(`'${collectionNameToClear}' is empty. Moving to next.`);
-                    continue;
-                }
-
                 let deletedInCollection = 0;
-                const totalInCollection = allRows.length;
-                setStatusMessage(`Starting deletion of ${totalInCollection} rows from '${collectionNameToClear}'...`);
+                
+                // Loop to fetch and delete in batches until the collection is empty
+                while (true) {
+                    let rowsToDelete = [];
+                    try {
+                        // Fetch a batch of rows. We assume getList() might have a limit (e.g., 1000).
+                        rowsToDelete = await collection.getList();
+                    } catch (e) {
+                        console.warn(`Could not get list for ${collectionNameToClear}, probably doesn't exist. Skipping.`);
+                        setStatusMessage(`Skipping '${collectionNameToClear}', likely doesn't exist.`);
+                        break; // Exit the while loop for this collection.
+                    }
 
-                const batchSize = 100;
-                for (let i = 0; i < totalInCollection; i += batchSize) {
-                    const batch = allRows.slice(i, i + batchSize);
-                    const promises = batch.map(row => collection.delete(row.id));
-                    const results = await Promise.allSettled(promises);
+                    if (rowsToDelete.length === 0) {
+                        setStatusMessage(`'${collectionNameToClear}' is now empty. Moving to next.`);
+                        break; // No more rows to delete, exit the while loop.
+                    }
+                    
+                    setStatusMessage(`Found ${rowsToDelete.length} rows in '${collectionNameToClear}'. Proceeding with deletion...`);
 
-                    const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
-                    deletedInCollection += successfulDeletes;
-                    totalDeletedCount += successfulDeletes;
+                    const batchSize = 100; // Process deletions in smaller sub-batches to be safe
+                    for (let i = 0; i < rowsToDelete.length; i += batchSize) {
+                        const batch = rowsToDelete.slice(i, i + batchSize);
+                        const promises = batch.map(row => collection.delete(row.id));
+                        const results = await Promise.allSettled(promises);
 
-                    setStatusMessage(`Deleting from '${collectionNameToClear}': ${deletedInCollection} / ${totalInCollection} rows removed.`);
+                        const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
+                        deletedInCollection += successfulDeletes;
+                        totalDeletedCount += successfulDeletes;
+
+                        setStatusMessage(`Deleting from '${collectionNameToClear}': ${deletedInCollection} total rows removed from this collection.`);
+                    }
                 }
             }
 
