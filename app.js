@@ -153,29 +153,34 @@ const App = () => {
                 setStatusMessage(`Starting deletion for '${collectionNameToClear}'...`);
                 const collection = room.collection(collectionNameToClear);
                 let deletedInCollection = 0;
-                
-                // Loop to fetch and delete in batches until the collection is empty
+                let offset = 0;
+                const paginationLimit = 1000; // Fetch IDs in batches of 1000
+
                 while (true) {
                     let rowsToDelete = [];
                     try {
-                        // Fetch a batch of rows. We assume getList() might have a limit (e.g., 1000).
-                        rowsToDelete = await collection.getList();
+                        // Use a paginated SQL query to fetch only the IDs, which is more efficient.
+                        const results = await room.query(
+                            `SELECT id FROM public.${collectionNameToClear} LIMIT $1 OFFSET $2`,
+                            [paginationLimit, offset]
+                        );
+                        rowsToDelete = results || [];
                     } catch (e) {
-                        console.warn(`Could not get list for ${collectionNameToClear}, probably doesn't exist. Skipping.`);
-                        setStatusMessage(`Skipping '${collectionNameToClear}', likely doesn't exist.`);
-                        break; // Exit the while loop for this collection.
+                        console.warn(`Could not query collection ${collectionNameToClear}, it may not exist or an error occurred.`, e);
+                        setStatusMessage(`Skipping '${collectionNameToClear}', it might not exist.`);
+                        break; // Exit the while loop for this collection
                     }
 
                     if (rowsToDelete.length === 0) {
                         setStatusMessage(`'${collectionNameToClear}' is now empty. Moving to next.`);
-                        break; // No more rows to delete, exit the while loop.
+                        break; // No more rows to delete in this collection
                     }
                     
                     setStatusMessage(`Found ${rowsToDelete.length} rows in '${collectionNameToClear}'. Proceeding with deletion...`);
 
-                    const batchSize = 100; // Process deletions in smaller sub-batches to be safe
-                    for (let i = 0; i < rowsToDelete.length; i += batchSize) {
-                        const batch = rowsToDelete.slice(i, i + batchSize);
+                    const deleteBatchSize = 100; // Process deletions in smaller sub-batches to avoid overwhelming the network
+                    for (let i = 0; i < rowsToDelete.length; i += deleteBatchSize) {
+                        const batch = rowsToDelete.slice(i, i + deleteBatchSize);
                         const promises = batch.map(row => collection.delete(row.id));
                         const results = await Promise.allSettled(promises);
 
@@ -184,6 +189,12 @@ const App = () => {
                         totalDeletedCount += successfulDeletes;
 
                         setStatusMessage(`Deleting from '${collectionNameToClear}': ${deletedInCollection} total rows removed from this collection.`);
+                    }
+                    
+                    // If we fetched a full batch, there might be more rows. Continue to the next offset.
+                    // If we fetched less than a full batch, we've reached the end.
+                    if (rowsToDelete.length < paginationLimit) {
+                        break;
                     }
                 }
             }
