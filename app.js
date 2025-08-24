@@ -21,6 +21,7 @@ const App = () => {
     const testRowCollection = React.useMemo(() => room.collection(collectionName), [room, collectionName]);
 
     const [isRunning, setIsRunning] = React.useState(false);
+    const [isDeleting, setIsDeleting] = React.useState(false);
     const [attemptedCount, setAttemptedCount] = React.useState(0);
     const [currentValue, setCurrentValue] = React.useState(0);
     const [delayMs, setDelayMs] = React.useState(10); // Initial delay
@@ -129,13 +130,67 @@ const App = () => {
         setStatusMessage("Client state reset. Database rows shown are current. Ready for a new test.");
     };
 
+    const handleClearDatabase = async () => {
+        if (!window.confirm(`Are you sure you want to delete all ${confirmedCountInDB} rows from the collection '${collectionName}'? This action cannot be undone.`)) {
+            return;
+        }
+
+        setIsRunning(false);
+        setIsDeleting(true);
+        setStatusMessage("Preparing to delete all rows...");
+
+        try {
+            const allRows = await testRowCollection.getList();
+            
+            if (allRows.length === 0) {
+                setStatusMessage("Database is already empty.");
+                setIsDeleting(false);
+                return;
+            }
+
+            let deletedCount = 0;
+            const totalRows = allRows.length;
+            setStatusMessage(`Starting deletion of ${totalRows} rows...`);
+
+            const batchSize = 100;
+            for (let i = 0; i < totalRows; i += batchSize) {
+                const batch = allRows.slice(i, i + batchSize);
+                const promises = batch.map(row => testRowCollection.delete(row.id));
+                const results = await Promise.allSettled(promises);
+                
+                const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
+                deletedCount += successfulDeletes;
+                
+                setStatusMessage(`Deleting... ${deletedCount} / ${totalRows} rows removed.`);
+            }
+            
+            setStatusMessage(`Successfully deleted ${deletedCount} rows. DB should be empty.`);
+            handleResetClientState();
+        } catch (error) {
+            console.error("Error clearing database:", error);
+            setLastError(`Error clearing database: ${error.message}`);
+            setStatusMessage("An error occurred during deletion. Some rows may remain.");
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const isBusy = isRunning || isDeleting;
+
     return (
         <div>
             <h1>Database Stress Test</h1>
             <div className="button-group">
-                <button onClick={handleStartTest} disabled={isRunning}>Start Test</button>
+                <button onClick={handleStartTest} disabled={isBusy}>Start Test</button>
                 <button onClick={handleStopTest} disabled={!isRunning}>Stop Test</button>
-                <button onClick={handleResetClientState} disabled={isRunning}>Reset Client State & Counters</button>
+                <button onClick={handleResetClientState} disabled={isBusy}>Reset Client State</button>
+                <button
+                    className="danger"
+                    onClick={handleClearDatabase}
+                    disabled={isBusy || countLoading}
+                >
+                    Clear All DB Rows ({countLoading ? '...' : confirmedCountInDB})
+                </button>
             </div>
 
             <h2>Live Status & Stats</h2>
