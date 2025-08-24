@@ -131,44 +131,66 @@ const App = () => {
     };
 
     const handleClearDatabase = async () => {
-        if (!window.confirm(`Are you sure you want to delete all ${confirmedCountInDB} rows from the collection '${collectionName}'? This action cannot be undone.`)) {
+        const collectionsToClear = [
+            'stress_test_row',
+            'stress_test_row_v2',
+            'stress_test_row_v3',
+            'stress_test_row_v4'
+        ];
+
+        if (!window.confirm(`Are you sure you want to attempt to delete all rows from collections: ${collectionsToClear.join(', ')}? This action cannot be undone.`)) {
             return;
         }
 
         setIsRunning(false);
         setIsDeleting(true);
-        setStatusMessage("Preparing to delete all rows...");
+        setStatusMessage("Preparing to delete all rows from all test collections...");
+
+        let totalDeletedCount = 0;
 
         try {
-            const allRows = await testRowCollection.getList();
-            
-            if (allRows.length === 0) {
-                setStatusMessage("Database is already empty.");
-                setIsDeleting(false);
-                return;
+            for (const collectionNameToClear of collectionsToClear) {
+                setStatusMessage(`Fetching rows from '${collectionNameToClear}'...`);
+                const collection = room.collection(collectionNameToClear);
+                
+                // We wrap this in a try/catch because getList might fail if the table doesn't exist.
+                let allRows = [];
+                try {
+                     allRows = await collection.getList();
+                } catch(e) {
+                    console.warn(`Could not get list for ${collectionNameToClear}, probably doesn't exist. Skipping.`);
+                    setStatusMessage(`Skipping '${collectionNameToClear}', likely doesn't exist.`);
+                    continue; // Move to the next collection
+                }
+
+                if (allRows.length === 0) {
+                    setStatusMessage(`'${collectionNameToClear}' is empty. Moving to next.`);
+                    continue;
+                }
+
+                let deletedInCollection = 0;
+                const totalInCollection = allRows.length;
+                setStatusMessage(`Starting deletion of ${totalInCollection} rows from '${collectionNameToClear}'...`);
+
+                const batchSize = 100;
+                for (let i = 0; i < totalInCollection; i += batchSize) {
+                    const batch = allRows.slice(i, i + batchSize);
+                    const promises = batch.map(row => collection.delete(row.id));
+                    const results = await Promise.allSettled(promises);
+
+                    const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
+                    deletedInCollection += successfulDeletes;
+                    totalDeletedCount += successfulDeletes;
+
+                    setStatusMessage(`Deleting from '${collectionNameToClear}': ${deletedInCollection} / ${totalInCollection} rows removed.`);
+                }
             }
 
-            let deletedCount = 0;
-            const totalRows = allRows.length;
-            setStatusMessage(`Starting deletion of ${totalRows} rows...`);
-
-            const batchSize = 100;
-            for (let i = 0; i < totalRows; i += batchSize) {
-                const batch = allRows.slice(i, i + batchSize);
-                const promises = batch.map(row => testRowCollection.delete(row.id));
-                const results = await Promise.allSettled(promises);
-                
-                const successfulDeletes = results.filter(r => r.status === 'fulfilled').length;
-                deletedCount += successfulDeletes;
-                
-                setStatusMessage(`Deleting... ${deletedCount} / ${totalRows} rows removed.`);
-            }
-            
-            setStatusMessage(`Successfully deleted ${deletedCount} rows. DB should be empty.`);
+            setStatusMessage(`Successfully deleted a total of ${totalDeletedCount} rows across all test collections.`);
             handleResetClientState();
         } catch (error) {
             console.error("Error clearing database:", error);
-            setLastError(`Error clearing database: ${error.message}`);
+            setLastError(`Error clearing databases: ${error.message}`);
             setStatusMessage("An error occurred during deletion. Some rows may remain.");
         } finally {
             setIsDeleting(false);
@@ -187,9 +209,9 @@ const App = () => {
                 <button
                     className="danger"
                     onClick={handleClearDatabase}
-                    disabled={isBusy || countLoading}
+                    disabled={isBusy}
                 >
-                    Clear All DB Rows ({countLoading ? '...' : confirmedCountInDB})
+                    Clear All Test DB Rows
                 </button>
             </div>
 
