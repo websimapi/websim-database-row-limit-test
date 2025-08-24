@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { WebsimSocket, useQuery } from '@websim/use-query';
 
 const App = () => {
-    const collectionName = 'stress_test_row_v3'; // Use a versioned collection name
+    const collectionName = 'stress_test_row_v4'; // Use a versioned collection name
 
     const room = React.useMemo(() => {
         return new WebsimSocket({
@@ -31,18 +31,23 @@ const App = () => {
     const timeoutRef = React.useRef(null);
     const isRunningRef = React.useRef(isRunning); 
 
-    // Fetch database rows using useQuery with a direct SQL query
-    const { data: dbRowsData, loading: dbRowsLoading } = useQuery(
+    // Query for total row count - much more efficient than fetching all rows
+    const { data: countData, loading: countLoading } = useQuery(
+        room.query(`SELECT count(id) as total FROM public.${collectionName}`)
+    );
+    const confirmedCountInDB = countData?.[0]?.total || 0;
+
+    // Query for the 5 most recent rows for display
+    const { data: recentRowsData, loading: recentRowsLoading } = useQuery(
         room.query(
             `SELECT r.id, r.value, r.client_timestamp, r.created_at, u.username 
              FROM public.${collectionName} r 
              JOIN public.user u ON r.user_id = u.id 
-             ORDER BY r.created_at DESC`
+             ORDER BY r.created_at DESC
+             LIMIT 5`
         )
     );
-    const dbRows = dbRowsData || []; // Ensure dbRows is always an array, already sorted by SQL
-
-    const confirmedCountInDB = dbRows.length;
+    const recentRows = recentRowsData || [];
 
     const insertRowLogic = React.useCallback(async () => {
         setAttemptedCount(prev => prev + 1);
@@ -146,15 +151,15 @@ const App = () => {
             {lastError && <p className="error-message">Last Error: {lastError}</p>}
             
             <h2>Database Verification</h2>
-            <p><strong>Total Confirmed Rows in DB: {dbRowsLoading ? 'Loading...' : confirmedCountInDB}</strong></p>
-            <p><em>(Showing up to 5 most recent rows from database. List updates in real-time.)</em></p>
+            <p><strong>Total Confirmed Rows in DB: {countLoading ? 'Loading...' : confirmedCountInDB}</strong></p>
+            <p><em>(Showing the 5 most recent rows from database. List updates in real-time.)</em></p>
             <ul>
-                {dbRowsLoading ? (
+                {recentRowsLoading ? (
                     <li>Loading database entries...</li>
-                ) : dbRows.length === 0 ? (
+                ) : recentRows.length === 0 ? (
                     <li>No rows found in the database for collection '{collectionName}'.</li>
                 ) : (
-                    dbRows.slice(0, 5).map(row => (
+                    recentRows.map(row => (
                         <li key={row.id}>
                             <strong>Value: {row.value}</strong> (ID: {row.id.substring(0,8)}...) <br />
                             Created: {new Date(row.created_at).toLocaleString()} by {row.username} <br />
@@ -163,7 +168,7 @@ const App = () => {
                     ))
                 )}
             </ul>
-            { !dbRowsLoading && dbRows.length > 5 && <p>...and {dbRows.length - 5} more rows not shown.</p>}
+            { !countLoading && confirmedCountInDB > 5 && <p>...and {confirmedCountInDB - 5} more rows not shown.</p>}
         </div>
     );
 };
