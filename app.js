@@ -86,14 +86,27 @@ const App = () => {
             setSuccessfulLocalInserts(prev => prev + 1);
             setCurrentValue(prev => prev + 1);
             setLastError(null);
-            setStatusMessage(`Success: Value ${valueToInsert}. Next in ${delayMs}ms.`);
+            // On success, try to speed up again slightly
+            const newDelay = Math.max(1, Math.floor(delayMs * 0.95));
+            setDelayMs(newDelay);
+            setStatusMessage(`Success: Value ${valueToInsert}. Next in ${newDelay}ms.`);
         } catch (error) {
             console.error(`Insertion error for value ${valueToInsert}:`, error);
             const errorMessage = error.message || String(error);
             setLastError(`Failed (val: ${valueToInsert}): ${errorMessage.substring(0,100)}`);
-            const newDelay = Math.min(Math.floor(delayMs * 1.5) + 100, 10000);
+            
+            let newDelay;
+            if (errorMessage.includes("CONNECTION_ENDED")) {
+                // This is a more serious network error. Back off aggressively.
+                newDelay = Math.min(delayMs + 2000, 15000); // Add a flat 2 seconds, max 15s
+                setStatusMessage(`Connection lost. Pausing for recovery. New delay: ${newDelay}ms.`);
+            } else {
+                // Standard backoff for other errors
+                newDelay = Math.min(Math.floor(delayMs * 1.5) + 100, 10000);
+                setStatusMessage(`Error: Value ${valueToInsert}. New delay: ${newDelay}ms. Retrying...`);
+            }
+            
             setDelayMs(newDelay);
-            setStatusMessage(`Error: Value ${valueToInsert}. New delay: ${newDelay}ms. Retrying...`);
         }
     }, [currentValue, delayMs, testRowCollection, setAttemptedCount, setSuccessfulLocalInserts, setCurrentValue, setLastError, setDelayMs, setStatusMessage]);
 
