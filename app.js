@@ -32,20 +32,43 @@ const App = () => {
     const timeoutRef = React.useRef(null);
     const isRunningRef = React.useRef(isRunning); 
 
-    // Query for total row count - much more efficient than fetching all rows
-    const { data: countData, loading: countLoading } = useQuery(
-        room.query(`SELECT count(id) as total FROM public.${collectionName}`)
+    // Query for total row count from all versions
+    const { data: countsData, loading: countsLoading } = useQuery(
+        room.query(`
+            SELECT 'stress_test_row' as collection, count(id) as total FROM public.stress_test_row
+            UNION ALL
+            SELECT 'stress_test_row_v2' as collection, count(id) as total FROM public.stress_test_row_v2
+            UNION ALL
+            SELECT 'stress_test_row_v3' as collection, count(id) as total FROM public.stress_test_row_v3
+            UNION ALL
+            SELECT 'stress_test_row_v4' as collection, count(id) as total FROM public.stress_test_row_v4
+        `)
     );
-    const confirmedCountInDB = countData?.[0]?.total || 0;
 
-    // Query for the 5 most recent rows for display
+    const totalConfirmedCountInDB = React.useMemo(() => {
+        if (!countsData) return 0;
+        return countsData.reduce((sum, item) => sum + parseInt(item.total, 10), 0);
+    }, [countsData]);
+
+    const countsByCollection = countsData || [];
+
+    // Query for the 10 most recent rows for display from all versions
     const { data: recentRowsData, loading: recentRowsLoading } = useQuery(
         room.query(
-            `SELECT r.id, r.value, r.client_timestamp, r.created_at, u.username 
-             FROM public.${collectionName} r 
-             JOIN public.user u ON r.user_id = u.id 
-             ORDER BY r.created_at DESC
-             LIMIT 5`
+            `WITH all_rows AS (
+                SELECT id, value, client_timestamp, created_at, user_id, 'stress_test_row' as version FROM public.stress_test_row
+                UNION ALL
+                SELECT id, value, client_timestamp, created_at, user_id, 'stress_test_row_v2' as version FROM public.stress_test_row_v2
+                UNION ALL
+                SELECT id, value, client_timestamp, created_at, user_id, 'stress_test_row_v3' as version FROM public.stress_test_row_v3
+                UNION ALL
+                SELECT id, value, client_timestamp, created_at, user_id, 'stress_test_row_v4' as version FROM public.stress_test_row_v4
+            )
+            SELECT r.id, r.value, r.client_timestamp, r.created_at, r.version, u.username 
+            FROM all_rows r 
+            JOIN public.user u ON r.user_id = u.id 
+            ORDER BY r.created_at DESC
+            LIMIT 10`
         )
     );
     const recentRows = recentRowsData || [];
@@ -236,29 +259,43 @@ const App = () => {
                 <div className="stat-item"><strong>Succeeded (Client Ack):</strong> {successfulLocalInserts}</div>
                 <div className="stat-item"><strong>Next Value to Insert:</strong> {currentValue}</div>
                 <div className="stat-item"><strong>Current Delay:</strong> {delayMs} ms</div>
-                <div className="stat-item"><strong>Collection:</strong> {collectionName}</div>
+                <div className="stat-item"><strong>Writing To Collection:</strong> {collectionName}</div>
             </div>
             {lastError && <p className="error-message">Last Error: {lastError}</p>}
             
-            <h2>Database Verification</h2>
-            <p><strong>Total Confirmed Rows in DB: {countLoading ? 'Loading...' : confirmedCountInDB}</strong></p>
-            <p><em>(Showing the 5 most recent rows from database. List updates in real-time.)</em></p>
+            <h2>Database Verification (All Versions)</h2>
+            <p><strong>Total Confirmed Rows in DB: {countsLoading ? 'Loading...' : totalConfirmedCountInDB}</strong></p>
+            
+            <h3>Counts by Collection:</h3>
+            <ul>
+                {countsLoading ? (
+                    <li>Loading counts...</li>
+                ) : countsByCollection.length > 0 ? (
+                    countsByCollection.map(c => <li key={c.collection}><strong>{c.collection}:</strong> {c.total} rows</li>)
+                ) : (
+                    <li>No collections found or all are empty.</li>
+                )}
+            </ul>
+
+            <h3>Most Recent Rows (Across All Collections):</h3>
+            <p><em>(Showing the 10 most recent rows from all databases. List updates in real-time.)</em></p>
             <ul>
                 {recentRowsLoading ? (
                     <li>Loading database entries...</li>
                 ) : recentRows.length === 0 ? (
-                    <li>No rows found in the database for collection '{collectionName}'.</li>
+                    <li>No rows found in any test collection.</li>
                 ) : (
                     recentRows.map(row => (
                         <li key={row.id}>
-                            <strong>Value: {row.value}</strong> (ID: {row.id.substring(0,8)}...) <br />
+                            <strong>Value: {row.value}</strong> (From: <em>{row.version}</em>)<br />
+                            ID: {row.id.substring(0,8)}... <br />
                             Created: {new Date(row.created_at).toLocaleString()} by {row.username} <br />
                             Client Ts: {row.client_timestamp ? new Date(row.client_timestamp).toLocaleTimeString([], {hour12:false, minute:'2-digit', second:'2-digit', fractionalSecondDigits: 3}) : 'N/A'}
                         </li>
                     ))
                 )}
             </ul>
-            { !countLoading && confirmedCountInDB > 5 && <p>...and {confirmedCountInDB - 5} more rows not shown.</p>}
+            { !countsLoading && totalConfirmedCountInDB > 10 && <p>...and {totalConfirmedCountInDB - 10} more rows not shown.</p>}
         </div>
     );
 };
